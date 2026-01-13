@@ -119,10 +119,6 @@ def obtener_recomendaciones(
 
 @app.get("/reset_db_completo")
 def reset_database(db: Session = Depends(get_db)):
-    """
-    ¡PELIGRO! Borra TODAS las tablas y las crea de nuevo.
-    Úsalo solo cuando cambies la estructura de la BD (como hoy).
-    """
     models.Base.metadata.drop_all(bind=engine)   # Borrar todo
     models.Base.metadata.create_all(bind=engine) # Crear todo limpio
     return {"msg": "Base de datos formateada a cero. Ahora ejecuta /setup_datos_iniciales"}
