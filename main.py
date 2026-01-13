@@ -3,22 +3,19 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
 
-# --- IMPORTACIONES LOCALES (Tu Arquitectura) ---
+# --- IMPORTACIONES LOCALES ---
 from database import engine, get_db, Base
 import models
 from ml_engine import MotorRecomendacion
 
-# 1. Crear las tablas en la Base de Datos si no existen
+# Crear tablas si no existen
 models.Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="PoliMapa Backend", version="2.0")
-
-# 2. Instanciar el Motor de IA (Se carga una sola vez en memoria)
+app = FastAPI(title="PoliMapa Backend", version="2.1 Servicios")
 recomendador = MotorRecomendacion()
 
-# --- SCHEMAS (Validación de datos JSON entrada/salida) ---
+# --- SCHEMAS ACTUALIZADOS ---
 
-# Para recibir las preferencias anidadas desde Android
 class PreferenciasInput(BaseModel):
     sel_comida: int
     sel_estudio: int
@@ -29,13 +26,14 @@ class UsuarioRegistro(BaseModel):
     email: str
     preferencias: PreferenciasInput
 
-# Para responder al mapa con datos limpios
+# AHORA EL EDIFICIO INCLUYE UNA LISTA DE STRINGS
 class EdificioData(BaseModel):
     id: int
     nombre: str
     lat: float
     lng: float
     descripcion: str
+    servicios: List[str] = [] # <--- Nuevo campo: Lista de servicios
 
 class RecomendacionResponse(BaseModel):
     edificio: EdificioData
@@ -46,26 +44,19 @@ class RecomendacionResponse(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "online", "mode": "PostgreSQL + ML Engine"}
+    return {"status": "online", "version": "2.1 con Servicios"}
 
+# ... (El endpoint /registrar queda IGUAL que antes) ...
 @app.post("/registrar")
 def registrar_usuario(datos: UsuarioRegistro, db: Session = Depends(get_db)):
-    """
-    Recibe el usuario desde Android y lo guarda/actualiza en PostgreSQL.
-    Aplana el objeto 'preferencias' para guardarlo en columnas simples.
-    """
-    # 1. Buscar si ya existe por email
     usuario_db = db.query(models.UsuarioDB).filter(models.UsuarioDB.email == datos.email).first()
-    
     if usuario_db:
-        # Actualizar existentes
         usuario_db.nombre = datos.nombre
         usuario_db.pref_comida = datos.preferencias.sel_comida
         usuario_db.pref_estudio = datos.preferencias.sel_estudio
         usuario_db.pref_hobby = datos.preferencias.sel_hobby
         msg = "Usuario actualizado"
     else:
-        # Crear nuevo
         usuario_db = models.UsuarioDB(
             nombre=datos.nombre,
             email=datos.email,
@@ -75,60 +66,39 @@ def registrar_usuario(datos: UsuarioRegistro, db: Session = Depends(get_db)):
         )
         db.add(usuario_db)
         msg = "Usuario registrado"
-    
     db.commit()
-    db.refresh(usuario_db)
-    return {"mensaje": msg, "usuario": usuario_db.nombre}
+    return {"mensaje": msg}
 
 @app.get("/recomendaciones/{email}", response_model=List[RecomendacionResponse])
 def obtener_recomendaciones(
     email: str,
-    latitud: Optional[float] = Query(None), # Opcionales por si Android no envía GPS aún
+    latitud: Optional[float] = Query(None),
     longitud: Optional[float] = Query(None),
     db: Session = Depends(get_db)
 ):
-    """
-    El núcleo del sistema.
-    1. Busca al usuario.
-    2. Busca edificios y eventos.
-    3. Usa ml_engine para calcular scores.
-    4. Retorna el Top 3.
-    """
-    # A. Validar Usuario
     usuario = db.query(models.UsuarioDB).filter(models.UsuarioDB.email == email).first()
     if not usuario:
-        # Si no existe, lanzamos error 404 para que Android lo sepa
-        raise HTTPException(status_code=404, detail="Usuario no encontrado. Regístrate primero.")
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    # B. Obtener todos los Edificios
     edificios = db.query(models.EdificioDB).all()
-    
     resultados_procesados = []
 
-    # C. Iterar y Predecir
     for ed in edificios:
-        # Buscar eventos activos en este edificio específico
         eventos = db.query(models.EventoDB).filter(models.EventoDB.edificio_id == ed.id).all()
         
-        # LLAMADA AL MOTOR DE IA
         score_ia, evento_match = recomendador.predecir(
-            usuario=usuario, 
-            edificio=ed, 
-            eventos_activos=eventos,
-            ubicacion_usuario_lat=latitud,
-            ubicacion_usuario_lng=longitud
+            usuario=usuario, edificio=ed, eventos_activos=eventos,
+            ubicacion_usuario_lat=latitud, ubicacion_usuario_lng=longitud
         )
         
-        # Generar texto explicativo (Explainability)
-        motivo = "Basado en tus preferencias generales"
-        if evento_match:
-            motivo = f"🎉 ¡Evento ahora!: {evento_match.nombre}"
-        elif score_ia >= 80:
-            motivo = "🔥 Coincidencia perfecta con tus gustos"
-        elif score_ia >= 50:
-            motivo = "✅ Recomendado para ti"
+        motivo = "Basado en tus preferencias"
+        if evento_match: motivo = f"🎉 ¡Evento!: {evento_match.nombre}"
+        elif score_ia >= 80: motivo = "🔥 Coincidencia perfecta"
+        elif score_ia >= 50: motivo = "✅ Recomendado para ti"
 
-        # D. Filtrar ruido (Solo mostramos si tiene un score mínimo decente)
+        # TRUCO: Convertimos la lista de objetos ServicioDB a lista de Strings simple para Android
+        lista_servicios_nombres = [s.nombre for s in ed.servicios_lista]
+
         if score_ia > 15.0:
             resultados_procesados.append({
                 "edificio": {
@@ -136,75 +106,68 @@ def obtener_recomendaciones(
                     "nombre": ed.nombre, 
                     "lat": ed.lat, 
                     "lng": ed.lng, 
-                    "descripcion": ed.descripcion
+                    "descripcion": ed.descripcion,
+                    "servicios": lista_servicios_nombres # <--- Enviamos la lista
                 },
                 "score": score_ia,
                 "motivo": motivo
             })
     
-    # E. Ordenar (Mayor puntaje primero) y cortar (Top 3)
-    resultados_ordenados = sorted(resultados_procesados, key=lambda x: x["score"], reverse=True)
-    top_3 = resultados_ordenados[:3]
-    
-    return top_3
+    return sorted(resultados_procesados, key=lambda x: x["score"], reverse=True)[:3]
 
-# --- HERRAMIENTAS DE CONFIGURACIÓN ---
+# --- NUEVOS ENDPOINTS DE GESTIÓN ---
+
+@app.get("/reset_db_completo")
+def reset_database(db: Session = Depends(get_db)):
+    """
+    ¡PELIGRO! Borra TODAS las tablas y las crea de nuevo.
+    Úsalo solo cuando cambies la estructura de la BD (como hoy).
+    """
+    models.Base.metadata.drop_all(bind=engine)   # Borrar todo
+    models.Base.metadata.create_all(bind=engine) # Crear todo limpio
+    return {"msg": "Base de datos formateada a cero. Ahora ejecuta /setup_datos_iniciales"}
 
 @app.get("/setup_datos_iniciales")
 def setup_db(db: Session = Depends(get_db)):
-    """
-    Ejecuta esto UNA VEZ desde el navegador para llenar la base de datos vacía.
-    """
     if db.query(models.EdificioDB).first():
-        return {"msg": "La base de datos ya tiene datos. No se hizo nada."}
+        return {"msg": "La base de datos ya tiene datos."}
     
-    # 1. Crear Edificios con sus 'Features' para el Random Forest
-    edificios_seed = [
-        models.EdificioDB(
-            nombre="Comedor Politécnico", 
-            lat=-0.2100, lng=-78.4900, 
-            descripcion="Almuerzos y comida variada.",
-            es_lugar_comida=True, es_lugar_estudio=False, es_lugar_hobby=False
-        ),
-        models.EdificioDB(
-            nombre="Biblioteca Central", 
-            lat=-0.2110, lng=-78.4910, 
-            descripcion="Zona de silencio y lectura.",
-            es_lugar_comida=False, es_lugar_estudio=True, es_lugar_hobby=False
-        ),
-        models.EdificioDB(
-            nombre="Canchas Sintéticas", 
-            lat=-0.2130, lng=-78.4930, 
-            descripcion="Fútbol y deporte al aire libre.",
-            es_lugar_comida=False, es_lugar_estudio=False, es_lugar_hobby=True
-        ),
-        models.EdificioDB(
-            nombre="Asociación de Sistemas", 
-            lat=-0.2120, lng=-78.4920, 
-            descripcion="Gaming, descanso y computadoras.",
-            es_lugar_comida=True, es_lugar_estudio=True, es_lugar_hobby=True
-        ),
-        models.EdificioDB(
-            nombre="Edificio de Aulas (EARME)", 
-            lat=-0.2140, lng=-78.4940, 
-            descripcion="Clases teóricas.",
-            es_lugar_comida=False, es_lugar_estudio=True, es_lugar_hobby=False
-        )
+    # 1. Crear Edificio
+    biblio = models.EdificioDB(
+        nombre="Biblioteca Central", lat=-0.2110, lng=-78.4910, 
+        descripcion="Zona de silencio.", es_lugar_estudio=True
+    )
+    comedor = models.EdificioDB(
+        nombre="Comedor Politécnico", lat=-0.2100, lng=-78.4900, 
+        descripcion="Almuerzos.", es_lugar_comida=True
+    )
+    aso = models.EdificioDB(
+        nombre="Aso Sistemas", lat=-0.2120, lng=-78.4920, 
+        descripcion="Gaming y PC.", es_lugar_hobby=True, es_lugar_estudio=True
+    )
+    
+    db.add_all([biblio, comedor, aso])
+    db.commit() # Guardamos para generar IDs
+    
+    # 2. Agregar Servicios (Aquí está la magia variable)
+    servicios = [
+        models.ServicioDB(nombre="Wifi Rápido", edificio_id=biblio.id),
+        models.ServicioDB(nombre="Cubículos Privados", edificio_id=biblio.id),
+        models.ServicioDB(nombre="Baños", edificio_id=biblio.id),
+        
+        models.ServicioDB(nombre="Microondas", edificio_id=comedor.id),
+        models.ServicioDB(nombre="Lavamanos", edificio_id=comedor.id),
+        
+        models.ServicioDB(nombre="Computadoras", edificio_id=aso.id),
+        models.ServicioDB(nombre="Arcade", edificio_id=aso.id),
+        models.ServicioDB(nombre="Impresiones", edificio_id=aso.id)
     ]
     
-    db.add_all(edificios_seed)
+    db.add_all(servicios)
+    
+    # 3. Eventos
+    ev = models.EventoDB(nombre="Torneo FC26", edificio_id=aso.id, tipo_evento="hobby")
+    db.add(ev)
+    
     db.commit()
-    
-    # 2. Crear un Evento de prueba
-    # Asumimos que la Aso de Sistemas es el ID 4 (según el orden de arriba, pero buscamos para asegurar)
-    aso = db.query(models.EdificioDB).filter(models.EdificioDB.nombre == "Asociación de Sistemas").first()
-    if aso:
-        evento = models.EventoDB(
-            nombre="Torneo FC26", 
-            edificio_id=aso.id, 
-            tipo_evento="hobby"
-        )
-        db.add(evento)
-        db.commit()
-    
-    return {"msg": "¡Base de datos inicializada con éxito! Edificios y eventos creados."}
+    return {"msg": "Datos cargados con Servicios variables"}
