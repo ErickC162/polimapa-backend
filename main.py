@@ -75,63 +75,47 @@ def registrar_usuario(datos: UsuarioRegistro, db: Session = Depends(get_db)):
     return {"mensaje": msg}
 
 @app.get("/recomendaciones/{email}", response_model=List[RecomendacionResponse])
-def obtener_recomendaciones(
+def obtener_mapa_personalizado(
     email: str,
     latitud: Optional[float] = Query(None),
     longitud: Optional[float] = Query(None),
     db: Session = Depends(get_db)
 ):
-    # 1. Buscar Usuario
     usuario = db.query(models.UsuarioDB).filter(models.UsuarioDB.email == email).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    # 2. Buscar Edificios
     edificios = db.query(models.EdificioDB).all()
     resultados_procesados = []
 
-    # 3. Analizar cada edificio
     for ed in edificios:
         eventos = db.query(models.EventoDB).filter(models.EventoDB.edificio_id == ed.id).all()
         
-        # El motor ahora buscará etiquetas DENTRO de los servicios del edificio
-        score_ia, evento_match = recomendador.predecir(
-            usuario=usuario, 
-            edificio=ed, 
-            eventos_activos=eventos,
-            ubicacion_usuario_lat=latitud, 
-            ubicacion_usuario_lng=longitud
-        )
+        # Calculamos score para TODOS (incluso si da 0)
+        score_ia, evento_match = recomendador.predecir(usuario, ed, eventos, latitud, longitud)
         
-        motivo = "Basado en tus preferencias"
+        motivo = "Edificio del campus" # Motivo por defecto
         if evento_match:
-            motivo = f"🎉 ¡Evento!: {evento_match.nombre}"
+            motivo = f"Evento: {evento_match.nombre}"
         elif score_ia >= 80:
-            motivo = "🔥 Coincidencia perfecta"
+            motivo = "¡Muy recomendado!"
         elif score_ia >= 50:
-            motivo = "✅ Recomendado para ti"
+            motivo = "Compatible contigo"
 
-        # Extraemos solo los nombres de los servicios para enviarlos a Android
-        nombres_servicios = [s.nombre for s in ed.servicios_lista]
-
-        if score_ia > 15.0:
-            resultados_procesados.append({
-                "edificio": {
-                    "id": ed.id, 
-                    "nombre": ed.nombre, 
-                    "lat": ed.lat, 
-                    "lng": ed.lng, 
-                    "descripcion": ed.descripcion,
-                    "servicios": nombres_servicios
-                },
-                "score": score_ia,
-                "motivo": motivo
-            })
+        # AGREGAMOS TODOS A LA LISTA (Sin filtro if score > 15)
+        resultados_procesados.append({
+            "edificio": {
+                "id": ed.id, "nombre": ed.nombre, 
+                "lat": ed.lat, "lng": ed.lng, 
+                "descripcion": ed.descripcion,
+                "servicios": [s.nombre for s in ed.servicios_lista]
+            },
+            "score": score_ia, # Android usará esto para pintar de colores distintos
+            "motivo": motivo
+        })
     
-    # Retornar Top 3
-    return sorted(resultados_procesados, key=lambda x: x["score"], reverse=True)[:3]
-
-# --- ENDPOINTS DE GESTIÓN (RESET Y SETUP) ---
+    # Ordenamos: Los mejores primero, pero devolvemos la lista completa (37 edificios)
+    return sorted(resultados_procesados, key=lambda x: x["score"], reverse=True)# --- ENDPOINTS DE GESTIÓN (RESET Y SETUP) ---
 
 @app.get("/reset_db_completo")
 def reset_database(db: Session = Depends(get_db)):
