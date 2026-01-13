@@ -19,19 +19,29 @@ class EdificioDB(Base):
     lng = Column(Float)
     descripcion = Column(String)
     
-    # Variables ("Features") para el algoritmo Random Forest
+    # Features para IA
     es_lugar_comida = Column(Boolean, default=False)
     es_lugar_estudio = Column(Boolean, default=False)
     es_lugar_hobby = Column(Boolean, default=False)
     
-    # Relación con eventos
-    eventos = relationship("EventoDB", back_populates="edificio")
+    # RELACIONES
+    eventos = relationship("EventoDB", back_populates="edificio", cascade="all, delete-orphan")
+    # Nueva relación: Servicios
+    servicios_lista = relationship("ServicioDB", back_populates="edificio", cascade="all, delete-orphan")
+
+class ServicioDB(Base):
+    __tablename__ = "servicios"
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String) # Ej: "Baños", "Ascensor", "Fotocopiadora"
+    edificio_id = Column(Integer, ForeignKey("edificios.id"))
+    
+    edificio = relationship("EdificioDB", back_populates="servicios_lista")
 
 class EventoDB(Base):
     __tablename__ = "eventos"
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String)
     edificio_id = Column(Integer, ForeignKey("edificios.id"))
-    tipo_evento = Column(String) # "comida", "estudio", "hobby"
+    tipo_evento = Column(String)
     
     edificio = relationship("EdificioDB", back_populates="eventos")
