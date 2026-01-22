@@ -19,29 +19,18 @@ class EdificioDB(Base):
     lng = Column(Float)
     descripcion = Column(String)
     
-    # YA NO TIENE BOOLEANOS AQUÍ. El edificio es solo el cascarón físico.
-    
-    eventos = relationship("EventoDB", back_populates="edificio", cascade="all, delete-orphan")
     servicios_lista = relationship("ServicioDB", back_populates="edificio", cascade="all, delete-orphan")
 
 class ServicioDB(Base):
     __tablename__ = "servicios"
     id = Column(Integer, primary_key=True, index=True)
-    nombre = Column(String) # Ej: "Cafetería del Sur"
+    nombre = Column(String)
+    piso = Column(String)
     edificio_id = Column(Integer, ForeignKey("edificios.id"))
     
-    # AHORA LAS ETIQUETAS VIVEN AQUÍ
+    # Flags para la IA
     es_lugar_comida = Column(Boolean, default=False)
     es_lugar_estudio = Column(Boolean, default=False)
     es_lugar_hobby = Column(Boolean, default=False)
     
     edificio = relationship("EdificioDB", back_populates="servicios_lista")
-
-class EventoDB(Base):
-    __tablename__ = "eventos"
-    id = Column(Integer, primary_key=True, index=True)
-    nombre = Column(String)
-    edificio_id = Column(Integer, ForeignKey("edificios.id"))
-    tipo_evento = Column(String)
-    
-    edificio = relationship("EdificioDB", back_populates="eventos")
