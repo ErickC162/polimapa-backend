@@ -106,7 +106,7 @@ def obtener_recomendaciones(email: str, db: Session = Depends(get_db)):
     
     ranking = []
     for s in servicios:
-        # Filtrar servicios vacíos
+        # Si el servicio no tiene características definidas (todo falso), saltar
         if not (s.es_lugar_comida or s.es_lugar_estudio or s.es_lugar_hobby):
             continue
 
@@ -116,17 +116,19 @@ def obtener_recomendaciones(email: str, db: Session = Depends(get_db)):
         categoria = "General"
         motivo = "Lugar de interés"
         
-        if s.es_lugar_comida and usuario.pref_comida > 0:
+        if s.es_lugar_comida: # Simplificado: Si es comida, etiquétalo, aunque el usuario no lo pida a gritos
             categoria = "Comida"
-            motivo = "Recomendado para comer"
-        elif s.es_lugar_estudio and usuario.pref_estudio > 0:
+            motivo = "Zona de alimentación"
+        elif s.es_lugar_estudio:
             categoria = "Estudio"
-            motivo = "Ideal para estudiar"
-        elif s.es_lugar_hobby and usuario.pref_hobby > 0:
+            motivo = "Zona de estudio"
+        elif s.es_lugar_hobby:
             categoria = "Hobby"
             motivo = "Zona recreativa"
             
-        if score > 40:
+        # --- CAMBIO IMPORTANTE: BAJAMOS EL FILTRO A 0 ---
+        # Antes estaba en > 40. Ahora mostramos todo lo que tenga un mínimo de sentido.
+        if score > 0: 
             ranking.append({
                 "datos": {
                     "id_servicio": s.id,
@@ -141,4 +143,8 @@ def obtener_recomendaciones(email: str, db: Session = Depends(get_db)):
                 "motivo": motivo
             })
     
-    return sorted(ranking, key=lambda x: x["score"], reverse=True)[:15]
+    # Devolvemos el Top 5, si la lista está vacía, llegará vacía al celular
+    resultado = sorted(ranking, key=lambda x: x["score"], reverse=True)[:5]
+    
+    print(f"DEBUG: Encontradas {len(resultado)} recomendaciones para {email}") # Verás esto en la consola de Render
+    return resultado
