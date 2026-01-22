@@ -11,7 +11,7 @@ from ml_engine import MotorRecomendacion
 # Crear tablas al iniciar
 models.Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="PoliMapa Backend V3", version="Final")
+app = FastAPI(title="PoliMapa Backend V4", version="Final")
 recomendador = MotorRecomendacion()
 
 # --- MODELOS DE DATOS (SCHEMAS) ---
@@ -33,6 +33,7 @@ class EdificioBasico(BaseModel):
     lat: float
     lng: float
     descripcion: str
+    servicios: List[str] = [] # <--- NUEVO CAMPO IMPORTANTE
 
 # Modelo para los pines ROJOS (Servicios Recomendados)
 class ServicioData(BaseModel):
@@ -80,18 +81,27 @@ def registrar_usuario(datos: UsuarioRegistro, db: Session = Depends(get_db)):
     db.commit()
     return {"mensaje": "Usuario guardado exitosamente"}
 
-# NUEVO ENDPOINT: Obtener todos los edificios (Para pines Azules)
+# ENDPOINT: Obtener todos los edificios (Para pines Azules)
 @app.get("/edificios", response_model=List[EdificioBasico])
 def obtener_todos_los_edificios(db: Session = Depends(get_db)):
     edificios = db.query(models.EdificioDB).all()
     resultado = []
+    
     for ed in edificios:
+        # Extraemos la lista de nombres de servicios reales de la BD
+        lista_servicios = [s.nombre for s in ed.servicios_lista]
+        
+        # Texto por defecto si está vacío
+        if not lista_servicios:
+            lista_servicios = ["Aulas / Sin servicios públicos registrados"]
+
         resultado.append({
             "id": ed.id,
             "nombre": ed.nombre,
             "lat": ed.lat,
             "lng": ed.lng,
-            "descripcion": ed.descripcion or "Edificio del campus"
+            "descripcion": ed.descripcion or "Edificio del campus",
+            "servicios": lista_servicios # <--- Enviamos la lista real
         })
     return resultado
 
@@ -106,17 +116,15 @@ def obtener_recomendaciones(email: str, db: Session = Depends(get_db)):
     
     ranking = []
     for s in servicios:
-        # Si el servicio no tiene características definidas (todo falso), saltar
         if not (s.es_lugar_comida or s.es_lugar_estudio or s.es_lugar_hobby):
             continue
 
         score = recomendador.predecir(usuario, s)
         
-        # Categorización visual
         categoria = "General"
         motivo = "Lugar de interés"
         
-        if s.es_lugar_comida: # Simplificado: Si es comida, etiquétalo, aunque el usuario no lo pida a gritos
+        if s.es_lugar_comida:
             categoria = "Comida"
             motivo = "Zona de alimentación"
         elif s.es_lugar_estudio:
@@ -126,9 +134,8 @@ def obtener_recomendaciones(email: str, db: Session = Depends(get_db)):
             categoria = "Hobby"
             motivo = "Zona recreativa"
             
-        # --- CAMBIO IMPORTANTE: BAJAMOS EL FILTRO A 0 ---
-        # Antes estaba en > 40. Ahora mostramos todo lo que tenga un mínimo de sentido.
-        if score > 0: 
+        # Filtro relajado (> 0) para asegurar que siempre haya datos
+        if score > 0:
             ranking.append({
                 "datos": {
                     "id_servicio": s.id,
@@ -143,8 +150,4 @@ def obtener_recomendaciones(email: str, db: Session = Depends(get_db)):
                 "motivo": motivo
             })
     
-    # Devolvemos el Top 5, si la lista está vacía, llegará vacía al celular
-    resultado = sorted(ranking, key=lambda x: x["score"], reverse=True)[:5]
-    
-    print(f"DEBUG: Encontradas {len(resultado)} recomendaciones para {email}") # Verás esto en la consola de Render
-    return resultado
+    return sorted(ranking, key=lambda x: x["score"], reverse=True)[:5]
