@@ -62,7 +62,7 @@ data_train = []
 COLUMNAS = ['u_comida', 'u_estudio', 'u_hobby', 'match_comida', 'match_estudio', 'match_hobby', 'match_afinidad', 'popularidad', 'score']
 
 print("Generando dataset sintético...")
-for _ in range(40000):
+for _ in range(10000):
     uc, ue, uh = [random.choice(list(c.keys())) for c in [CAT_COMIDA, CAT_ESTUDIO, CAT_HOBBY]]
     serv = random.choice(SERVICIOS_REALES)
     _, c_c, c_e, c_h, pop = serv
