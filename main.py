@@ -1,129 +1,113 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.orm import Session
-from typing import List, Optional
-from pydantic import BaseModel
-
-# Importaciones locales
-from database import engine, get_db
+from typing import List
+import database
 import models
-from ml_engine import MotorRecomendacion
+import ml_engine
 
-# Crear tablas (si no existen)
-models.Base.metadata.create_all(bind=engine)
+app = FastAPI(title="PoliMapa API")
 
-app = FastAPI(title="PoliMapa Backend V5 - Categorías", version="5.0")
-recomendador = MotorRecomendacion()
+# Dependencia para la base de datos
+def get_db():
+    db = database.SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-# --- DICCIONARIOS PARA RESPUESTA ---
-LABELS_COMIDA  = {0: "", 1: "Almuerzo", 2: "Comida Rápida", 3: "Saludable", 4: "Café"}
-LABELS_ESTUDIO = {0: "", 1: "Biblioteca", 2: "Grupal", 3: "Aire Libre", 4: "Laboratorio", 5: "Aulas"}
-LABELS_HOBBY   = {0: "", 1: "Fútbol", 2: "Básquet", 3: "Ecuavóley", 4: "Gaming", 5: "Gym", 6: "Relax"}
+@app.get("/")
+def read_root():
+    return {"mensaje": "Bienvenido a PoliMapa API - EPN"}
 
-# --- SCHEMAS ---
-
-class PreferenciasInput(BaseModel):
-    sel_comida: int
-    sel_estudio: int
-    sel_hobby: int
-
-class UsuarioRegistro(BaseModel):
-    nombre: str
-    email: str
-    preferencias: PreferenciasInput
-
-class ServicioData(BaseModel):
-    id_servicio: int
-    nombre_servicio: str
-    piso: str
-    nombre_edificio: str
-    lat: float
-    lng: float
-    popularidad: int
-    score: float
-    categoria_match: str  # Ej: "Comida (Almuerzo)"
-    motivo: str           # Ej: "Alta coincidencia en tus gustos"
-
-class RecomendacionResponse(BaseModel):
-    datos: ServicioData
-
-# --- ENDPOINTS ---
-
-@app.post("/usuarios/")
-def crear_usuario(user: UsuarioRegistro, db: Session = Depends(get_db)):
-    db_user = models.UsuarioDB(
-        nombre=user.nombre, 
-        email=user.email,
-        pref_comida=user.preferencias.sel_comida,
-        pref_estudio=user.preferencias.sel_estudio,
-        pref_hobby=user.preferencias.sel_hobby
+# 1. REGISTRO DE USUARIO
+@app.post("/registrar", response_model=models.RespuestaRegistro)
+def registrar_usuario(usuario: models.UsuarioRegistro, db: Session = Depends(get_db)):
+    # Verificar si el usuario ya existe
+    db_usuario = db.query(models.Usuario).filter(models.Usuario.email == usuario.email).first()
+    if db_usuario:
+        # Si existe, actualizamos sus preferencias
+        db_usuario.sel_comida = usuario.preferencias.sel_comida
+        db_usuario.sel_estudio = usuario.preferencias.sel_estudio
+        db_usuario.sel_hobby = usuario.preferencias.sel_hobby
+        db.commit()
+        return {"mensaje": "Preferencias actualizadas correctamente"}
+    
+    # Si no existe, crear uno nuevo
+    nuevo_usuario = models.Usuario(
+        nombre=usuario.nombre,
+        email=usuario.email,
+        sel_comida=usuario.preferencias.sel_comida,
+        sel_estudio=usuario.preferencias.sel_estudio,
+        sel_hobby=usuario.preferencias.sel_hobby
     )
-    db.add(db_user)
+    db.add(nuevo_usuario)
     db.commit()
-    db.refresh(db_user)
-    return {"id": db_user.id, "mensaje": "Usuario creado"}
+    return {"mensaje": "Usuario registrado exitosamente"}
 
-@app.get("/recomendaciones/{usuario_id}", response_model=List[RecomendacionResponse])
-def obtener_recomendaciones(usuario_id: int, db: Session = Depends(get_db)):
-    usuario = db.query(models.UsuarioDB).filter(models.UsuarioDB.id == usuario_id).first()
+# 2. OBTENER RECOMENDACIONES (La causa del error 422)
+@app.get("/recomendaciones/{email}", response_model=List[models.RecomendacionResponse])
+def obtener_recomendaciones(email: str, db: Session = Depends(get_db)):
+    # 1. Buscar el usuario
+    usuario = db.query(models.Usuario).filter(models.Usuario.email == email).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    # Traemos todos los servicios con su edificio
-    servicios = db.query(models.ServicioDB).join(models.EdificioDB).all()
-    
-    ranking = []
-    
-    for s in servicios:
-        # Filtro básico: Si el lugar no tiene NINGUNA capacidad (listas vacías), lo saltamos
-        if not (s.lista_comida or s.lista_estudio or s.lista_hobby):
-            continue
+    # 2. Obtener todos los servicios de la DB
+    servicios = db.query(models.Servicio).all()
+    if not servicios:
+        return []
 
-        # Usamos el motor ML para predecir
-        score = recomendador.predecir(usuario, s)
-        
-        # Si el score es muy bajo, no lo recomendamos
-        if score < 15:
-            continue
-            
-        # Determinar etiqueta de visualización
-        cat_match = "General"
-        detalles = []
-        
-        # Lógica para mostrar qué hizo match
-        # Verificamos si lo que el usuario quiere está en lo que el lugar ofrece
-        if usuario.pref_comida in s.lista_comida:
-            detalles.append(f"Comida: {LABELS_COMIDA.get(usuario.pref_comida)}")
-        elif s.lista_comida: # Si ofrece comida pero no match exacto
-             detalles.append("Comida")
+    # 3. Pasar los datos al motor de ML
+    # El motor debe recibir las selecciones del usuario (0, 1, 2...)
+    predicciones = ml_engine.recomendar_servicios(
+        usuario.sel_comida, 
+        usuario.sel_estudio, 
+        usuario.sel_hobby, 
+        servicios
+    )
 
-        if usuario.pref_estudio in s.lista_estudio:
-            detalles.append(f"Estudio: {LABELS_ESTUDIO.get(usuario.pref_estudio)}")
-        elif s.lista_estudio:
-            detalles.append("Estudio")
-            
-        if usuario.pref_hobby in s.lista_hobby:
-            detalles.append(f"Hobby: {LABELS_HOBBY.get(usuario.pref_hobby)}")
-        elif s.lista_hobby:
-             detalles.append("Recreación")
-
-        cat_str = " / ".join(detalles) if detalles else "Lugar de interés"
-
-        ranking.append({
+    # 4. Formatear la respuesta EXACTAMENTE como la espera Android
+    resultado = []
+    for p in predicciones:
+        s = p["servicio"]
+        resultado.append({
             "datos": {
                 "id_servicio": s.id,
                 "nombre_servicio": s.nombre,
-                "piso": s.piso or "PB",
+                "piso": s.piso,
                 "nombre_edificio": s.edificio.nombre,
-                "lat": s.edificio.lat,
-                "lng": s.edificio.lng,
+                "lat": s.edificio.latitud,
+                "lng": s.edificio.longitud,
+                "categoria": s.categoria,
                 "popularidad": s.popularidad,
-                "score": round(score, 2),
-                "categoria_match": cat_str,
-                "motivo": f"Popularidad: {s.popularidad}/10"
-            }
+                "caps_comida_str": s.caps_comida_str,
+                "caps_estudio_str": s.caps_estudio_str,
+                "caps_hobby_str": s.caps_hobby_str
+            },
+            "score": float(p["score"]),
+            "motivo": p["motivo"]
         })
-
-    # Ordenar por score descendente
-    ranking.sort(key=lambda x: x["datos"]["score"], reverse=True)
     
-    return ranking[:5]
+    return resultado
+
+# 3. OBTENER TODOS LOS EDIFICIOS (Pines Azules)
+@app.get("/edificios", response_model=List[models.EdificioBasico])
+def obtener_edificios(db: Session = Depends(get_db)):
+    edificios = db.query(models.Edificio).all()
+    resultado = []
+    for e in edificios:
+        # Extraer lista de nombres de servicios
+        nombres_servicios = [s.nombre for s in e.servicios]
+        resultado.append({
+            "id": e.id,
+            "nombre": e.nombre,
+            "lat": e.latitud,
+            "lng": e.longitud,
+            "descripcion": e.descripcion or "Edificio de la EPN",
+            "servicios": nombres_servicios
+        })
+    return resultado
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
