@@ -1,66 +1,87 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from database import Base
+from pydantic import BaseModel
+from typing import List, Optional
 
-class UsuarioDB(Base):
+# ==========================================
+# MODELOS DE BASE DE DATOS (SQLAlchemy)
+# ==========================================
+
+class Usuario(Base):
     __tablename__ = "usuarios"
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String)
     email = Column(String, unique=True, index=True)
-    # Preferencias del 0 al N según tus diccionarios
-    pref_comida = Column(Integer, default=0)
-    pref_estudio = Column(Integer, default=0)
-    pref_hobby = Column(Integer, default=0)
+    sel_comida = Column(Integer)
+    sel_estudio = Column(Integer)
+    sel_hobby = Column(Integer)
 
-class EdificioDB(Base):
+class Edificio(Base):
     __tablename__ = "edificios"
     id = Column(Integer, primary_key=True, index=True)
-    nombre = Column(String)
-    lat = Column(Float)
-    lng = Column(Float)
-    descripcion = Column(String)
-    
-    servicios_lista = relationship("ServicioDB", back_populates="edificio", cascade="all, delete-orphan")
+    nombre = Column(String, unique=True)
+    latitud = Column(Float)
+    longitud = Column(Float)
+    descripcion = Column(Text)
+    servicios = relationship("Servicio", back_populates="edificio")
 
-class ServicioDB(Base):
+class Servicio(Base):
     __tablename__ = "servicios"
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String)
     piso = Column(String)
     edificio_id = Column(Integer, ForeignKey("edificios.id"))
+    categoria = Column(String)  # 'Comida', 'Estudio', 'Hobby'
+    popularidad = Column(Integer, default=0)
+    caps_comida_str = Column(String, nullable=True)
+    caps_estudio_str = Column(String, nullable=True)
+    caps_hobby_str = Column(String, nullable=True)
     
-    # --- NUEVAS COLUMNAS REQUERIDAS ---
-    popularidad = Column(Integer, default=5)
-    
-    # Almacenan ids separados por comas: "1,2,4"
-    caps_comida_str = Column(String, default="")
-    caps_estudio_str = Column(String, default="")
-    caps_hobby_str = Column(String, default="")
+    edificio = relationship("Edificio", back_populates="servicios")
 
-    edificio = relationship("EdificioDB", back_populates="servicios_lista")
+# ==========================================
+# ESQUEMAS DE VALIDACIÓN (Pydantic)
+# ==========================================
 
-    # --- PROPIEDADES DE AYUDA (Helpers) ---
-    # Estas propiedades convierten el texto de la BD en listas usables por Python
-    @property
-    def lista_comida(self):
-        if not self.caps_comida_str: return []
-        try:
-            return [int(x) for x in self.caps_comida_str.split(',') if x.strip()]
-        except ValueError:
-            return []
+class PreferenciasInput(BaseModel):
+    sel_comida: int
+    sel_estudio: int
+    sel_hobby: int
 
-    @property
-    def lista_estudio(self):
-        if not self.caps_estudio_str: return []
-        try:
-            return [int(x) for x in self.caps_estudio_str.split(',') if x.strip()]
-        except ValueError:
-            return []
+class UsuarioRegistro(BaseModel):
+    nombre: str
+    email: str
+    preferencias: PreferenciasInput
 
-    @property
-    def lista_hobby(self):
-        if not self.caps_hobby_str: return []
-        try:
-            return [int(x) for x in self.caps_hobby_str.split(',') if x.strip()]
-        except ValueError:
-            return []
+class RespuestaRegistro(BaseModel):
+    mensaje: str
+
+class ServicioData(BaseModel):
+    id_servicio: int
+    nombre_servicio: str
+    piso: str
+    nombre_edificio: str
+    lat: float
+    lng: float
+    categoria: str
+    popularidad: Optional[int] = 0
+    caps_comida_str: Optional[str] = None
+    caps_estudio_str: Optional[str] = None
+    caps_hobby_str: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+class RecomendacionResponse(BaseModel):
+    datos: ServicioData
+    score: float
+    motivo: str
+
+class EdificioBasico(BaseModel):
+    id: int
+    nombre: str
+    lat: float
+    lng: float
+    descripcion: str
+    servicios: List[str]

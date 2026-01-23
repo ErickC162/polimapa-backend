@@ -7,7 +7,7 @@ import ml_engine
 
 app = FastAPI(title="PoliMapa API")
 
-# Dependencia para la base de datos
+# Dependencia de DB
 def get_db():
     db = database.SessionLocal()
     try:
@@ -17,48 +17,38 @@ def get_db():
 
 @app.get("/")
 def read_root():
-    return {"mensaje": "Bienvenido a PoliMapa API - EPN"}
+    return {"mensaje": "PoliMapa API Funcionando"}
 
-# 1. REGISTRO DE USUARIO
 @app.post("/registrar", response_model=models.RespuestaRegistro)
 def registrar_usuario(usuario: models.UsuarioRegistro, db: Session = Depends(get_db)):
-    # Verificar si el usuario ya existe
     db_usuario = db.query(models.Usuario).filter(models.Usuario.email == usuario.email).first()
+    
     if db_usuario:
-        # Si existe, actualizamos sus preferencias
+        db_usuario.nombre = usuario.nombre
         db_usuario.sel_comida = usuario.preferencias.sel_comida
         db_usuario.sel_estudio = usuario.preferencias.sel_estudio
         db_usuario.sel_hobby = usuario.preferencias.sel_hobby
-        db.commit()
-        return {"mensaje": "Preferencias actualizadas correctamente"}
+    else:
+        nuevo_usuario = models.Usuario(
+            nombre=usuario.nombre,
+            email=usuario.email,
+            sel_comida=usuario.preferencias.sel_comida,
+            sel_estudio=usuario.preferencias.sel_estudio,
+            sel_hobby=usuario.preferencias.sel_hobby
+        )
+        db.add(nuevo_usuario)
     
-    # Si no existe, crear uno nuevo
-    nuevo_usuario = models.Usuario(
-        nombre=usuario.nombre,
-        email=usuario.email,
-        sel_comida=usuario.preferencias.sel_comida,
-        sel_estudio=usuario.preferencias.sel_estudio,
-        sel_hobby=usuario.preferencias.sel_hobby
-    )
-    db.add(nuevo_usuario)
     db.commit()
-    return {"mensaje": "Usuario registrado exitosamente"}
+    return models.RespuestaRegistro(mensaje="Usuario procesado correctamente")
 
-# 2. OBTENER RECOMENDACIONES (La causa del error 422)
 @app.get("/recomendaciones/{email}", response_model=List[models.RecomendacionResponse])
 def obtener_recomendaciones(email: str, db: Session = Depends(get_db)):
-    # 1. Buscar el usuario
     usuario = db.query(models.Usuario).filter(models.Usuario.email == email).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    # 2. Obtener todos los servicios de la DB
     servicios = db.query(models.Servicio).all()
-    if not servicios:
-        return []
-
-    # 3. Pasar los datos al motor de ML
-    # El motor debe recibir las selecciones del usuario (0, 1, 2...)
+    # ml_engine procesa y devuelve lista de diccionarios {'servicio', 'score', 'motivo'}
     predicciones = ml_engine.recomendar_servicios(
         usuario.sel_comida, 
         usuario.sel_estudio, 
@@ -66,10 +56,10 @@ def obtener_recomendaciones(email: str, db: Session = Depends(get_db)):
         servicios
     )
 
-    # 4. Formatear la respuesta EXACTAMENTE como la espera Android
     resultado = []
     for p in predicciones:
         s = p["servicio"]
+        # Mapeo manual para transformar latitud/longitud de DB a lat/lng de API
         resultado.append({
             "datos": {
                 "id_servicio": s.id,
@@ -87,27 +77,18 @@ def obtener_recomendaciones(email: str, db: Session = Depends(get_db)):
             "score": float(p["score"]),
             "motivo": p["motivo"]
         })
-    
     return resultado
 
-# 3. OBTENER TODOS LOS EDIFICIOS (Pines Azules)
 @app.get("/edificios", response_model=List[models.EdificioBasico])
 def obtener_edificios(db: Session = Depends(get_db)):
     edificios = db.query(models.Edificio).all()
-    resultado = []
-    for e in edificios:
-        # Extraer lista de nombres de servicios
-        nombres_servicios = [s.nombre for s in e.servicios]
-        resultado.append({
+    return [
+        {
             "id": e.id,
             "nombre": e.nombre,
             "lat": e.latitud,
             "lng": e.longitud,
-            "descripcion": e.descripcion or "Edificio de la EPN",
-            "servicios": nombres_servicios
-        })
-    return resultado
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+            "descripcion": e.descripcion or "Sin descripción",
+            "servicios": [s.nombre for s in e.servicios]
+        } for e in edificios
+    ]
