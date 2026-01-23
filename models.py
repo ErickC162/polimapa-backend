@@ -1,30 +1,26 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Float, ForeignKey
 from sqlalchemy.orm import relationship
 from database import Base
 from pydantic import BaseModel
 from typing import List, Optional
 
-# ==========================================
-# MODELOS DE BASE DE DATOS (SQLAlchemy)
-# ==========================================
-
+# --- MODELOS SQLALCHEMY (Base de Datos) ---
 class Usuario(Base):
     __tablename__ = "usuarios"
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String)
     email = Column(String, unique=True, index=True)
-    # Cambiados para coincidir con tu base de datos en Render
-    sel_comida = Column("pref_comida", Integer) 
-    sel_estudio = Column("pref_estudio", Integer)
-    sel_hobby = Column("pref_hobby", Integer)
+    pref_comida = Column(Integer, default=0)
+    pref_estudio = Column(Integer, default=0)
+    pref_hobby = Column(Integer, default=0)
 
 class Edificio(Base):
     __tablename__ = "edificios"
     id = Column(Integer, primary_key=True, index=True)
-    nombre = Column(String, unique=True)
-    latitud = Column(Float)
-    longitud = Column(Float)
-    descripcion = Column(Text)
+    nombre = Column(String)
+    lat = Column(Float)
+    lng = Column(Float)
+    descripcion = Column(String)
     servicios = relationship("Servicio", back_populates="edificio")
 
 class Servicio(Base):
@@ -33,18 +29,21 @@ class Servicio(Base):
     nombre = Column(String)
     piso = Column(String)
     edificio_id = Column(Integer, ForeignKey("edificios.id"))
-    categoria = Column(String)
-    popularidad = Column(Integer, default=0)
-    caps_comida_str = Column(String, nullable=True)
-    caps_estudio_str = Column(String, nullable=True)
-    caps_hobby_str = Column(String, nullable=True)
+    popularidad = Column(Integer, default=5)
+    caps_comida_str = Column(String, default="")
+    caps_estudio_str = Column(String, default="")
+    caps_hobby_str = Column(String, default="")
     
     edificio = relationship("Edificio", back_populates="servicios")
 
-# ==========================================
-# ESQUEMAS DE VALIDACIÓN (Pydantic) - NO CAMBIAN
-# ==========================================
+    @property
+    def lista_comida(self): return [int(x) for x in self.caps_comida_str.split(',') if x.strip().isdigit()]
+    @property
+    def lista_estudio(self): return [int(x) for x in self.caps_estudio_str.split(',') if x.strip().isdigit()]
+    @property
+    def lista_hobby(self): return [int(x) for x in self.caps_hobby_str.split(',') if x.strip().isdigit()]
 
+# --- ESQUEMAS PYDANTIC (API) ---
 class PreferenciasInput(BaseModel):
     sel_comida: int
     sel_estudio: int
@@ -65,14 +64,7 @@ class ServicioData(BaseModel):
     nombre_edificio: str
     lat: float
     lng: float
-    categoria: str
-    popularidad: Optional[int] = 0
-    caps_comida_str: Optional[str] = None
-    caps_estudio_str: Optional[str] = None
-    caps_hobby_str: Optional[str] = None
-
-    class Config:
-        from_attributes = True
+    popularidad: int
 
 class RecomendacionResponse(BaseModel):
     datos: ServicioData
