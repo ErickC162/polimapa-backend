@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 
 # Importaciones locales
@@ -8,13 +8,18 @@ from database import engine, get_db
 import models
 from ml_engine import MotorRecomendacion
 
-# Crear tablas al iniciar
+# Crear tablas (si no existen)
 models.Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="PoliMapa Backend V4", version="Final")
+app = FastAPI(title="PoliMapa Backend V5 - Categorías", version="5.0")
 recomendador = MotorRecomendacion()
 
-# --- MODELOS DE DATOS (SCHEMAS) ---
+# --- DICCIONARIOS PARA RESPUESTA ---
+LABELS_COMIDA  = {0: "", 1: "Almuerzo", 2: "Comida Rápida", 3: "Saludable", 4: "Café"}
+LABELS_ESTUDIO = {0: "", 1: "Biblioteca", 2: "Grupal", 3: "Aire Libre", 4: "Laboratorio", 5: "Aulas"}
+LABELS_HOBBY   = {0: "", 1: "Fútbol", 2: "Básquet", 3: "Ecuavóley", 4: "Gaming", 5: "Gym", 6: "Relax"}
+
+# --- SCHEMAS ---
 
 class PreferenciasInput(BaseModel):
     sel_comida: int
@@ -26,16 +31,6 @@ class UsuarioRegistro(BaseModel):
     email: str
     preferencias: PreferenciasInput
 
-# Modelo para los pines AZULES (Edificios Generales)
-class EdificioBasico(BaseModel):
-    id: int
-    nombre: str
-    lat: float
-    lng: float
-    descripcion: str
-    servicios: List[str] = [] # <--- NUEVO CAMPO IMPORTANTE
-
-# Modelo para los pines ROJOS (Servicios Recomendados)
 class ServicioData(BaseModel):
     id_servicio: int
     nombre_servicio: str
@@ -43,111 +38,92 @@ class ServicioData(BaseModel):
     nombre_edificio: str
     lat: float
     lng: float
-    categoria: str
+    popularidad: int
+    score: float
+    categoria_match: str  # Ej: "Comida (Almuerzo)"
+    motivo: str           # Ej: "Alta coincidencia en tus gustos"
 
 class RecomendacionResponse(BaseModel):
     datos: ServicioData
-    score: float
-    motivo: str
-
-class RespuestaRegistro(BaseModel):
-    mensaje: str
 
 # --- ENDPOINTS ---
 
-@app.get("/")
-def home():
-    return {"status": "PoliMapa Backend Online"}
-
-@app.post("/registrar", response_model=RespuestaRegistro)
-def registrar_usuario(datos: UsuarioRegistro, db: Session = Depends(get_db)):
-    usuario = db.query(models.UsuarioDB).filter(models.UsuarioDB.email == datos.email).first()
-    
-    if usuario:
-        usuario.nombre = datos.nombre
-        usuario.pref_comida = datos.preferencias.sel_comida
-        usuario.pref_estudio = datos.preferencias.sel_estudio
-        usuario.pref_hobby = datos.preferencias.sel_hobby
-    else:
-        nuevo_usuario = models.UsuarioDB(
-            nombre=datos.nombre,
-            email=datos.email,
-            pref_comida=datos.preferencias.sel_comida,
-            pref_estudio=datos.preferencias.sel_estudio,
-            pref_hobby=datos.preferencias.sel_hobby
-        )
-        db.add(nuevo_usuario)
-    
+@app.post("/usuarios/")
+def crear_usuario(user: UsuarioRegistro, db: Session = Depends(get_db)):
+    db_user = models.UsuarioDB(
+        nombre=user.nombre, 
+        email=user.email,
+        pref_comida=user.preferencias.sel_comida,
+        pref_estudio=user.preferencias.sel_estudio,
+        pref_hobby=user.preferencias.sel_hobby
+    )
+    db.add(db_user)
     db.commit()
-    return {"mensaje": "Usuario guardado exitosamente"}
+    db.refresh(db_user)
+    return {"id": db_user.id, "mensaje": "Usuario creado"}
 
-# ENDPOINT: Obtener todos los edificios (Para pines Azules)
-@app.get("/edificios", response_model=List[EdificioBasico])
-def obtener_todos_los_edificios(db: Session = Depends(get_db)):
-    edificios = db.query(models.EdificioDB).all()
-    resultado = []
-    
-    for ed in edificios:
-        # Extraemos la lista de nombres de servicios reales de la BD
-        lista_servicios = [s.nombre for s in ed.servicios_lista]
-        
-        # Texto por defecto si está vacío
-        if not lista_servicios:
-            lista_servicios = ["Aulas / Sin servicios públicos registrados"]
-
-        resultado.append({
-            "id": ed.id,
-            "nombre": ed.nombre,
-            "lat": ed.lat,
-            "lng": ed.lng,
-            "descripcion": ed.descripcion or "Edificio del campus",
-            "servicios": lista_servicios # <--- Enviamos la lista real
-        })
-    return resultado
-
-# ENDPOINT: Recomendaciones (Para pines Rojos)
-@app.get("/recomendaciones/{email}", response_model=List[RecomendacionResponse])
-def obtener_recomendaciones(email: str, db: Session = Depends(get_db)):
-    usuario = db.query(models.UsuarioDB).filter(models.UsuarioDB.email == email).first()
+@app.get("/recomendaciones/{usuario_id}", response_model=List[RecomendacionResponse])
+def obtener_recomendaciones(usuario_id: int, db: Session = Depends(get_db)):
+    usuario = db.query(models.UsuarioDB).filter(models.UsuarioDB.id == usuario_id).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
+    # Traemos todos los servicios con su edificio
     servicios = db.query(models.ServicioDB).join(models.EdificioDB).all()
     
     ranking = []
+    
     for s in servicios:
-        if not (s.es_lugar_comida or s.es_lugar_estudio or s.es_lugar_hobby):
+        # Filtro básico: Si el lugar no tiene NINGUNA capacidad (listas vacías), lo saltamos
+        if not (s.lista_comida or s.lista_estudio or s.lista_hobby):
             continue
 
+        # Usamos el motor ML para predecir
         score = recomendador.predecir(usuario, s)
         
-        categoria = "General"
-        motivo = "Lugar de interés"
-        
-        if s.es_lugar_comida:
-            categoria = "Comida"
-            motivo = "Zona de alimentación"
-        elif s.es_lugar_estudio:
-            categoria = "Estudio"
-            motivo = "Zona de estudio"
-        elif s.es_lugar_hobby:
-            categoria = "Hobby"
-            motivo = "Zona recreativa"
+        # Si el score es muy bajo, no lo recomendamos
+        if score < 15:
+            continue
             
-        # Filtro relajado (> 0) para asegurar que siempre haya datos
-        if score > 0:
-            ranking.append({
-                "datos": {
-                    "id_servicio": s.id,
-                    "nombre_servicio": s.nombre,
-                    "piso": s.piso or "PB",
-                    "nombre_edificio": s.edificio.nombre,
-                    "lat": s.edificio.lat,
-                    "lng": s.edificio.lng,
-                    "categoria": categoria
-                },
-                "score": score,
-                "motivo": motivo
-            })
+        # Determinar etiqueta de visualización
+        cat_match = "General"
+        detalles = []
+        
+        # Lógica para mostrar qué hizo match
+        # Verificamos si lo que el usuario quiere está en lo que el lugar ofrece
+        if usuario.pref_comida in s.lista_comida:
+            detalles.append(f"Comida: {LABELS_COMIDA.get(usuario.pref_comida)}")
+        elif s.lista_comida: # Si ofrece comida pero no match exacto
+             detalles.append("Comida")
+
+        if usuario.pref_estudio in s.lista_estudio:
+            detalles.append(f"Estudio: {LABELS_ESTUDIO.get(usuario.pref_estudio)}")
+        elif s.lista_estudio:
+            detalles.append("Estudio")
+            
+        if usuario.pref_hobby in s.lista_hobby:
+            detalles.append(f"Hobby: {LABELS_HOBBY.get(usuario.pref_hobby)}")
+        elif s.lista_hobby:
+             detalles.append("Recreación")
+
+        cat_str = " / ".join(detalles) if detalles else "Lugar de interés"
+
+        ranking.append({
+            "datos": {
+                "id_servicio": s.id,
+                "nombre_servicio": s.nombre,
+                "piso": s.piso or "PB",
+                "nombre_edificio": s.edificio.nombre,
+                "lat": s.edificio.lat,
+                "lng": s.edificio.lng,
+                "popularidad": s.popularidad,
+                "score": round(score, 2),
+                "categoria_match": cat_str,
+                "motivo": f"Popularidad: {s.popularidad}/10"
+            }
+        })
+
+    # Ordenar por score descendente
+    ranking.sort(key=lambda x: x["datos"]["score"], reverse=True)
     
-    return sorted(ranking, key=lambda x: x["score"], reverse=True)[:5]
+    return ranking[:5]
