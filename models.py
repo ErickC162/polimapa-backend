@@ -1,10 +1,10 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from database import Base
 from pydantic import BaseModel
 from typing import List, Optional
 
-# --- MODELOS SQLALCHEMY (Base de Datos) ---
+# --- MODELOS SQLALCHEMY ---
 class Usuario(Base):
     __tablename__ = "usuarios"
     id = Column(Integer, primary_key=True, index=True)
@@ -20,7 +20,7 @@ class Edificio(Base):
     nombre = Column(String)
     lat = Column(Float)
     lng = Column(Float)
-    descripcion = Column(String)
+    descripcion = Column(Text)
     servicios = relationship("Servicio", back_populates="edificio")
 
 class Servicio(Base):
