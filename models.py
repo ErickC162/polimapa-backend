@@ -13,9 +13,10 @@ class Usuario(Base):
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String)
     email = Column(String, unique=True, index=True)
-    sel_comida = Column(Integer)
-    sel_estudio = Column(Integer)
-    sel_hobby = Column(Integer)
+    # Cambiados para coincidir con tu base de datos en Render
+    sel_comida = Column("pref_comida", Integer) 
+    sel_estudio = Column("pref_estudio", Integer)
+    sel_hobby = Column("pref_hobby", Integer)
 
 class Edificio(Base):
     __tablename__ = "edificios"
@@ -32,7 +33,7 @@ class Servicio(Base):
     nombre = Column(String)
     piso = Column(String)
     edificio_id = Column(Integer, ForeignKey("edificios.id"))
-    categoria = Column(String)  # 'Comida', 'Estudio', 'Hobby'
+    categoria = Column(String)
     popularidad = Column(Integer, default=0)
     caps_comida_str = Column(String, nullable=True)
     caps_estudio_str = Column(String, nullable=True)
@@ -41,7 +42,7 @@ class Servicio(Base):
     edificio = relationship("Edificio", back_populates="servicios")
 
 # ==========================================
-# ESQUEMAS DE VALIDACIÓN (Pydantic)
+# ESQUEMAS DE VALIDACIÓN (Pydantic) - NO CAMBIAN
 # ==========================================
 
 class PreferenciasInput(BaseModel):
