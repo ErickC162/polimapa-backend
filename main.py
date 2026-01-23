@@ -5,12 +5,10 @@ from typing import List
 
 app = FastAPI(title="PoliMapa API")
 
-# 1. RUTA DE INICIO (Para verificar que el server vive)
 @app.get("/")
 def read_root():
     return {"mensaje": "PoliMapa API Funcionando"}
 
-# 2. REGISTRO Y SINCRONIZACIÓN
 @app.post("/registrar", response_model=models.RespuestaRegistro)
 def registrar(usuario: models.UsuarioRegistro, db: Session = Depends(database.get_db)):
     db_u = db.query(models.Usuario).filter(models.Usuario.email == usuario.email).first()
@@ -24,7 +22,31 @@ def registrar(usuario: models.UsuarioRegistro, db: Session = Depends(database.ge
     db.commit()
     return {"mensaje": "Sincronización exitosa"}
 
-# 3. OBTENER RECOMENDACIONES (Pines Rojos)
+@app.get("/buscar", response_model=List[models.RecomendacionResponse])
+def buscar(q: str, db: Session = Depends(database.get_db)):
+    """Endpoint para búsqueda inteligente por texto"""
+    if not q:
+        return []
+        
+    motor = ml_engine.MotorRecomendacion()
+    servicios = db.query(models.Servicio).all()
+    busqueda_res = motor.buscar_lugares(q, servicios)
+    
+    return [{
+        "datos": {
+            "id_servicio": r["servicio"].id,
+            "nombre_servicio": r["servicio"].nombre,
+            "piso": r["servicio"].piso,
+            "nombre_edificio": r["servicio"].edificio.nombre,
+            "lat": r["servicio"].edificio.lat,
+            "lng": r["servicio"].edificio.lng,
+            "popularidad": r["servicio"].popularidad,
+            "keywords": r["servicio"].keywords
+        },
+        "score": float(r["score"]),
+        "motivo": r["motivo"]
+    } for r in busqueda_res]
+
 @app.get("/recomendaciones/{email}", response_model=List[models.RecomendacionResponse])
 def get_recomendaciones(email: str, db: Session = Depends(database.get_db)):
     user = db.query(models.Usuario).filter(models.Usuario.email == email).first()
@@ -33,7 +55,6 @@ def get_recomendaciones(email: str, db: Session = Depends(database.get_db)):
     
     motor = ml_engine.MotorRecomendacion()
     servicios = db.query(models.Servicio).all()
-    # El motor procesa y devuelve lista de {'servicio', 'score', 'motivo'}
     recoms = motor.recomendar_servicios(user.pref_comida, user.pref_estudio, user.pref_hobby, servicios)
     
     return [{
@@ -50,7 +71,6 @@ def get_recomendaciones(email: str, db: Session = Depends(database.get_db)):
         "motivo": r["motivo"]
     } for r in recoms]
 
-# 4. OBTENER TODOS LOS EDIFICIOS (Pines Azules)
 @app.get("/edificios", response_model=List[models.EdificioBasico])
 def get_edificios(db: Session = Depends(database.get_db)):
     eds = db.query(models.Edificio).all()

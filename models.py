@@ -33,6 +33,7 @@ class Servicio(Base):
     caps_comida_str = Column(String, default="")
     caps_estudio_str = Column(String, default="")
     caps_hobby_str = Column(String, default="")
+    keywords = Column(Text, default="") # <--- Nueva columna para búsqueda inteligente
     
     edificio = relationship("Edificio", back_populates="servicios")
 
@@ -65,6 +66,7 @@ class ServicioData(BaseModel):
     lat: float
     lng: float
     popularidad: int
+    keywords: Optional[str] = "" #
 
 class RecomendacionResponse(BaseModel):
     datos: ServicioData
