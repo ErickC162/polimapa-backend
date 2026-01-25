@@ -48,6 +48,16 @@ class Servicio(Base):
 
 # --- ESQUEMAS PYDANTIC (Formatos de respuesta API) ---
 
+class ResultadoBusqueda(BaseModel):
+    id: int
+    nombre: str
+    tipo: str  # "Edificio" o "Servicio"
+    lat: float
+    lng: float
+    info_extra: str 
+    score: float
+
+    
 class EdificioBusqueda(BaseModel):
     id: int
     nombre: str
@@ -90,3 +100,5 @@ class EdificioBasico(BaseModel):
     lng: float
     descripcion: str
     servicios: List[str]
+
+    

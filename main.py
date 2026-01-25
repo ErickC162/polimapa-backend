@@ -23,17 +23,16 @@ def registrar(usuario: models.UsuarioRegistro, db: Session = Depends(database.ge
     db.commit()
     return {"mensaje": "Sincronización exitosa"}
 
-@app.get("/buscar", response_model=List[models.EdificioBusqueda])
+@app.get("/buscar", response_model=List[models.ResultadoBusqueda])
 def buscar(q: str, db: Session = Depends(database.get_db)):
-    """
-    Endpoint usado por el Autocompletado (Dropdown).
-    Retorna lista de Edificios que coinciden con 'q'.
-    """
     if not q: return []
     motor = ml_engine.MotorRecomendacion()
-    # Cargamos todos los edificios para filtrar
     eds = db.query(models.Edificio).all()
-    return motor.buscar_edificios(q, eds)
+    servs = db.query(models.Servicio).all() # Asegúrate de cargar servicios también
+    
+    # IMPORTANTE: Asegúrate de que ml_engine.py tenga la función 'buscar_mixto'
+    # que te pasé en la respuesta anterior, NO 'buscar_edificios'.
+    return motor.buscar_mixto(q, eds, servs)
 
 @app.get("/recomendaciones/{email}", response_model=List[models.RecomendacionResponse])
 def get_recomendaciones(email: str, db: Session = Depends(database.get_db)):
