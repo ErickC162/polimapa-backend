@@ -5,6 +5,14 @@ from typing import List
 
 app = FastAPI(title="PoliMapa API")
 
+@app.get("/buscar", response_model=List[models.EdificioBusqueda])
+def buscar(q: str, db: Session = Depends(database.get_db)):
+    if not q: return []
+    motor = ml_engine.MotorRecomendacion()
+    # Cargamos edificios de la BD
+    eds = db.query(models.Edificio).all()
+    return motor.buscar_edificios(q, eds)
+
 @app.get("/")
 def read_root():
     return {"mensaje": "PoliMapa API Funcionando"}
