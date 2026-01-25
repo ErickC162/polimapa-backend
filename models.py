@@ -21,7 +21,7 @@ class Edificio(Base):
     lat = Column(Float)
     lng = Column(Float)
     descripcion = Column(Text)
-    keywords = Column(Text, default="") # <--- Nueva columna
+    keywords = Column(Text, default="") # Tags para búsqueda
     servicios = relationship("Servicio", back_populates="edificio")
 
 class Servicio(Base):
@@ -34,7 +34,7 @@ class Servicio(Base):
     caps_comida_str = Column(String, default="")
     caps_estudio_str = Column(String, default="")
     caps_hobby_str = Column(String, default="")
-    keywords = Column(Text, default="")
+    keywords = Column(Text, default="") # Tags para búsqueda
     
     edificio = relationship("Edificio", back_populates="servicios")
 
@@ -46,7 +46,7 @@ class Servicio(Base):
     def lista_hobby(self): return [int(x) for x in self.caps_hobby_str.split(',') if x.strip().isdigit()]
 
 # --- ESQUEMAS PYDANTIC (API) ---
-class EdificioBusqueda(BaseModel): # <--- Nuevo esquema para el Dropdown
+class EdificioBusqueda(BaseModel):
     id: int
     nombre: str
     lat: float
@@ -74,6 +74,7 @@ class ServicioData(BaseModel):
     lat: float
     lng: float
     popularidad: int
+    keywords: Optional[str] = ""
 
 class RecomendacionResponse(BaseModel):
     datos: ServicioData
