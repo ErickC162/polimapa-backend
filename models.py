@@ -4,8 +4,7 @@ from database import Base
 from pydantic import BaseModel
 from typing import List, Optional
 
-# --- MODELOS SQLALCHEMY (Base de Datos) ---
-
+# --- MODELOS SQLALCHEMY ---
 class Usuario(Base):
     __tablename__ = "usuarios"
     id = Column(Integer, primary_key=True, index=True)
@@ -22,7 +21,7 @@ class Edificio(Base):
     lat = Column(Float)
     lng = Column(Float)
     descripcion = Column(Text)
-    keywords = Column(Text, default="") # Etiquetas clave para el autocompletado
+    keywords = Column(Text, default="") # Tags para búsqueda
     servicios = relationship("Servicio", back_populates="edificio")
 
 class Servicio(Base):
@@ -35,7 +34,7 @@ class Servicio(Base):
     caps_comida_str = Column(String, default="")
     caps_estudio_str = Column(String, default="")
     caps_hobby_str = Column(String, default="")
-    keywords = Column(Text, default="") # Etiquetas clave para el autocompletado
+    keywords = Column(Text, default="") # Tags para búsqueda
     
     edificio = relationship("Edificio", back_populates="servicios")
 
@@ -46,18 +45,7 @@ class Servicio(Base):
     @property
     def lista_hobby(self): return [int(x) for x in self.caps_hobby_str.split(',') if x.strip().isdigit()]
 
-# --- ESQUEMAS PYDANTIC (Formatos de respuesta API) ---
-
-class ResultadoBusqueda(BaseModel):
-    id: int
-    nombre: str
-    tipo: str  # "Edificio" o "Servicio"
-    lat: float
-    lng: float
-    info_extra: str 
-    score: float
-
-    
+# --- ESQUEMAS PYDANTIC (API) ---
 class EdificioBusqueda(BaseModel):
     id: int
     nombre: str
@@ -100,5 +88,3 @@ class EdificioBasico(BaseModel):
     lng: float
     descripcion: str
     servicios: List[str]
-
-    
