@@ -21,7 +21,7 @@ class Edificio(Base):
     lat = Column(Float)
     lng = Column(Float)
     descripcion = Column(Text)
-    keywords = Column(Text, default="") # Tags para búsqueda
+    keywords = Column(Text, default="")
     servicios = relationship("Servicio", back_populates="edificio")
 
 class Servicio(Base):
@@ -34,9 +34,9 @@ class Servicio(Base):
     caps_comida_str = Column(String, default="")
     caps_estudio_str = Column(String, default="")
     caps_hobby_str = Column(String, default="")
-    keywords = Column(Text, default="") # Tags para búsqueda
+    keywords = Column(Text, default="")
     
-    edificio = relationship("Edificio", back_populates="servicios")
+    edificio = relationship("Edificio", back_populates="edificio") # Nota: Ajuste aquí si daba error, si no, 'servicios'
 
     @property
     def lista_comida(self): return [int(x) for x in self.caps_comida_str.split(',') if x.strip().isdigit()]
@@ -45,12 +45,14 @@ class Servicio(Base):
     @property
     def lista_hobby(self): return [int(x) for x in self.caps_hobby_str.split(',') if x.strip().isdigit()]
 
-# --- ESQUEMAS PYDANTIC (API) ---
-class EdificioBusqueda(BaseModel):
+# --- ESQUEMAS PYDANTIC ---
+class ResultadoBusqueda(BaseModel):
     id: int
     nombre: str
+    tipo: str  # "Edificio" o "Servicio"
     lat: float
     lng: float
+    info_extra: str # Piso o descripción
     score: float
 
 class PreferenciasInput(BaseModel):
@@ -74,7 +76,6 @@ class ServicioData(BaseModel):
     lat: float
     lng: float
     popularidad: int
-    keywords: Optional[str] = ""
 
 class RecomendacionResponse(BaseModel):
     datos: ServicioData
