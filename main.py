@@ -18,10 +18,17 @@ def registrar(usuario: models.UsuarioRegistro, db: Session = Depends(database.ge
 @app.get("/buscar", response_model=List[models.ResultadoBusqueda])
 def buscar(q: str, db: Session = Depends(database.get_db)):
     if not q: return []
-    motor = ml_engine.MotorRecomendacion()
-    eds = db.query(models.Edificio).all()
-    servs = db.query(models.Servicio).all()
-    return motor.buscar_mixto(q, eds, servs)
+    try:
+        motor = ml_engine.MotorRecomendacion()
+        # Carga ansiosa (joinedload) no es necesaria si lazy='joined' por defecto, 
+        # pero es bueno asegurarse que 'edificio' esté cargado para los servicios.
+        eds = db.query(models.Edificio).all()
+        servs = db.query(models.Servicio).all()
+        
+        return motor.buscar_mixto(q, eds, servs)
+    except Exception as e:
+        print(f"Error en buscar: {e}") # Ver log del servidor
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/recomendaciones/{email}", response_model=List[models.RecomendacionResponse])
 def get_recomendaciones(email: str, db: Session = Depends(database.get_db)):
